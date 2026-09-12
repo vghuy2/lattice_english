@@ -2,6 +2,9 @@
 
 namespace Database\Factories;
 
+use App\Enums\IeltsType;
+use App\Enums\UserRole;
+use App\Enums\UserStatus;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
@@ -30,12 +33,49 @@ class UserFactory extends Factory
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
             'remember_token' => Str::random(10),
+            'role' => UserRole::STUDENT,
+            'status' => UserStatus::ACTIVE,
+            'current_band' => 4.5,
+            'target_band' => 6.5,
+            'test_type' => IeltsType::ACADEMIC,
+            'target_date' => now()->addMonths(3),
+            'study_days_per_week' => 5,
+            'study_goal' => 'Mục tiêu cải thiện Lexical Resource và Task Response band 6.5+',
+            'onboarding_completed_at' => now(),
         ];
     }
 
-    /**
-     * Indicate that the model's email address should be unverified.
-     */
+    public function student(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => UserRole::STUDENT,
+        ]);
+    }
+
+    public function admin(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'role' => UserRole::ADMIN,
+            'onboarding_completed_at' => now(),
+        ]);
+    }
+
+    public function notOnboarded(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'onboarding_completed_at' => null,
+            'current_band' => null,
+            'target_band' => null,
+        ]);
+    }
+
+    public function banned(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'status' => UserStatus::BANNED,
+        ]);
+    }
+
     public function unverified(): static
     {
         return $this->state(fn (array $attributes) => [
