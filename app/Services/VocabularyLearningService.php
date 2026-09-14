@@ -158,20 +158,26 @@ class VocabularyLearningService
                 PracticeQuestionType::CONTEXTUAL,
             ];
 
+            $answersData = [];
+            $now = now();
+
             foreach ($items as $index => $item) {
                 $questionType = $types[$index % count($types)];
-
                 $questionData = $this->buildQuestionPayload($item, $questionType, $items, $distractorItems);
 
-                VocabularyPracticeAnswer::create([
+                $answersData[] = [
                     'session_id' => $session->id,
                     'vocabulary_item_id' => $item->id,
-                    'question_type' => $questionType,
-                    'question_data' => $questionData,
+                    'question_type' => $questionType->value,
+                    'question_data' => json_encode($questionData),
                     'user_answer' => null,
                     'is_correct' => false,
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
+
+            VocabularyPracticeAnswer::insert($answersData);
 
             return $session;
         });
@@ -224,19 +230,26 @@ class VocabularyLearningService
                 PracticeQuestionType::CONTEXTUAL,
             ];
 
+            $answersData = [];
+            $now = now();
+
             foreach ($items as $idx => $item) {
                 $questionType = $types[$idx % count($types)];
                 $questionData = $this->buildQuestionPayload($item, $questionType, $items, $distractors);
 
-                VocabularyPracticeAnswer::create([
+                $answersData[] = [
                     'session_id' => $session->id,
                     'vocabulary_item_id' => $item->id,
-                    'question_type' => $questionType,
-                    'question_data' => $questionData,
+                    'question_type' => $questionType->value,
+                    'question_data' => json_encode($questionData),
                     'user_answer' => null,
                     'is_correct' => false,
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
+
+            VocabularyPracticeAnswer::insert($answersData);
 
             return $session;
         });

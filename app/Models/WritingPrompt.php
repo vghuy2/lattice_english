@@ -72,6 +72,11 @@ class WritingPrompt extends Model
         return $this->hasMany(SampleEssay::class, 'writing_prompt_id')->orderBy('band_score', 'asc');
     }
 
+    public function submissions(): HasMany
+    {
+        return $this->hasMany(WritingSubmission::class, 'writing_prompt_id');
+    }
+
     public function getImageUrlAttribute(): ?string
     {
         if ($this->image_path) {

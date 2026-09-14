@@ -47,10 +47,17 @@ class StudentProgressService
      */
     public function getVocabularyStats(User $user): array
     {
-        $reviews = StudentVocabularyReview::where('user_id', $user->id)->get();
-        $totalMastered = $reviews->where('status', WordStudyStatus::KNOWN)->count();
-        $totalLearning = $reviews->where('status', WordStudyStatus::LEARNING)->count();
-        $totalSaved = $reviews->where('is_favorite', true)->count();
+        $stats = StudentVocabularyReview::where('user_id', $user->id)
+            ->selectRaw("
+                COUNT(CASE WHEN status = ? THEN 1 END) as mastered_count,
+                COUNT(CASE WHEN status = ? THEN 1 END) as learning_count,
+                COUNT(CASE WHEN is_favorite = 1 THEN 1 END) as saved_count
+            ", [WordStudyStatus::KNOWN->value, WordStudyStatus::LEARNING->value])
+            ->first();
+
+        $totalMastered = (int) ($stats->mastered_count ?? 0);
+        $totalLearning = (int) ($stats->learning_count ?? 0);
+        $totalSaved = (int) ($stats->saved_count ?? 0);
 
         $dueReviewCount = StudentVocabularyReview::forUser($user->id)->dueForReview()->count();
 
@@ -80,27 +87,43 @@ class StudentProgressService
      */
     public function getWritingStats(User $user): array
     {
-        $submissions = WritingSubmission::where('user_id', $user->id)->submitted()->get();
-        $totalSubmissions = $submissions->count();
+        $aggregate = WritingSubmission::where('writing_submissions.user_id', $user->id)
+            ->whereIn('writing_submissions.status', [
+                SubmissionStatus::SUBMITTED->value,
+                SubmissionStatus::GRADING->value,
+                SubmissionStatus::GRADED->value,
+            ])
+            ->join('writing_prompts', 'writing_submissions.writing_prompt_id', '=', 'writing_prompts.id')
+            ->selectRaw("
+                COUNT(writing_submissions.id) as total_submitted,
+                COUNT(CASE WHEN writing_submissions.status = ? THEN 1 END) as graded_count,
+                COUNT(CASE WHEN writing_prompts.task_type = 'task_1' THEN 1 END) as task1_count,
+                COUNT(CASE WHEN writing_prompts.task_type = 'task_2' THEN 1 END) as task2_count,
+                AVG(CASE WHEN writing_submissions.status = ? THEN writing_submissions.overall_score END) as avg_overall,
+                AVG(CASE WHEN writing_submissions.status = ? THEN writing_submissions.ta_score END) as avg_ta,
+                AVG(CASE WHEN writing_submissions.status = ? THEN writing_submissions.cc_score END) as avg_cc,
+                AVG(CASE WHEN writing_submissions.status = ? THEN writing_submissions.lr_score END) as avg_lr,
+                AVG(CASE WHEN writing_submissions.status = ? THEN writing_submissions.gra_score END) as avg_gra
+            ", [
+                SubmissionStatus::GRADED->value,
+                SubmissionStatus::GRADED->value,
+                SubmissionStatus::GRADED->value,
+                SubmissionStatus::GRADED->value,
+                SubmissionStatus::GRADED->value,
+                SubmissionStatus::GRADED->value,
+            ])
+            ->first();
 
-        $gradedSubmissions = $submissions->where('status', SubmissionStatus::GRADED);
-        $gradedCount = $gradedSubmissions->count();
+        $totalSubmissions = (int) ($aggregate->total_submitted ?? 0);
+        $gradedCount = (int) ($aggregate->graded_count ?? 0);
+        $task1Count = (int) ($aggregate->task1_count ?? 0);
+        $task2Count = (int) ($aggregate->task2_count ?? 0);
 
-        $avgOverall = $gradedCount > 0 ? round($gradedSubmissions->avg('overall_score'), 1) : null;
-        $avgTa = $gradedCount > 0 ? round($gradedSubmissions->avg('ta_score'), 1) : null;
-        $avgCc = $gradedCount > 0 ? round($gradedSubmissions->avg('cc_score'), 1) : null;
-        $avgLr = $gradedCount > 0 ? round($gradedSubmissions->avg('lr_score'), 1) : null;
-        $avgGra = $gradedCount > 0 ? round($gradedSubmissions->avg('gra_score'), 1) : null;
-
-        $task1Count = WritingSubmission::where('user_id', $user->id)
-            ->whereHas('prompt', fn ($q) => $q->where('task_type', 'task_1'))
-            ->submitted()
-            ->count();
-
-        $task2Count = WritingSubmission::where('user_id', $user->id)
-            ->whereHas('prompt', fn ($q) => $q->where('task_type', 'task_2'))
-            ->submitted()
-            ->count();
+        $avgOverall = $gradedCount > 0 && $aggregate->avg_overall !== null ? round((float) $aggregate->avg_overall, 1) : null;
+        $avgTa = $gradedCount > 0 && $aggregate->avg_ta !== null ? round((float) $aggregate->avg_ta, 1) : null;
+        $avgCc = $gradedCount > 0 && $aggregate->avg_cc !== null ? round((float) $aggregate->avg_cc, 1) : null;
+        $avgLr = $gradedCount > 0 && $aggregate->avg_lr !== null ? round((float) $aggregate->avg_lr, 1) : null;
+        $avgGra = $gradedCount > 0 && $aggregate->avg_gra !== null ? round((float) $aggregate->avg_gra, 1) : null;
 
         $recentSubmissions = WritingSubmission::where('user_id', $user->id)
             ->with(['prompt.topic'])
@@ -129,29 +152,30 @@ class StudentProgressService
      */
     public function calculateStudyStreak(User $user): array
     {
-        // Fetch active dates from practice answers, lesson progress and writing submissions
-        $dates = collect();
+        // Limit streak search window to 90 days for peak performance
+        $cutoffDate = Carbon::now()->subDays(90)->startOfDay();
 
-        $dates = $dates->merge(
-            VocabularyPracticeSession::where('user_id', $user->id)
-                ->where('status', 'completed')
-                ->pluck('created_at')
-                ->map(fn ($d) => $d->toDateString())
-        );
+        $practiceDates = VocabularyPracticeSession::where('user_id', $user->id)
+            ->where('status', 'completed')
+            ->where('created_at', '>=', $cutoffDate)
+            ->selectRaw('DISTINCT DATE(created_at) as active_date')
+            ->pluck('active_date');
 
-        $dates = $dates->merge(
-            WritingSubmission::where('user_id', $user->id)
-                ->pluck('updated_at')
-                ->map(fn ($d) => $d->toDateString())
-        );
+        $writingDates = WritingSubmission::where('user_id', $user->id)
+            ->where('updated_at', '>=', $cutoffDate)
+            ->selectRaw('DISTINCT DATE(updated_at) as active_date')
+            ->pluck('active_date');
 
-        $dates = $dates->merge(
-            StudentLessonProgress::where('user_id', $user->id)
-                ->pluck('updated_at')
-                ->map(fn ($d) => $d->toDateString())
-        );
+        $lessonDates = StudentLessonProgress::where('user_id', $user->id)
+            ->where('updated_at', '>=', $cutoffDate)
+            ->selectRaw('DISTINCT DATE(updated_at) as active_date')
+            ->pluck('active_date');
 
-        $uniqueDates = $dates->unique()->sortDesc()->values();
+        $uniqueDates = $practiceDates->merge($writingDates)->merge($lessonDates)
+            ->map(fn ($d) => Carbon::parse($d)->toDateString())
+            ->unique()
+            ->sortDesc()
+            ->values();
 
         // Calculate consecutive streak starting from today or yesterday
         $currentStreak = 0;

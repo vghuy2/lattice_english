@@ -61,6 +61,8 @@ Route::middleware('auth')->group(function () {
     // Student Protected Area (Must be onboarded)
     Route::middleware(['role:student', 'onboarded'])->prefix('student')->name('student.')->group(function () {
         Route::get('/dashboard', [StudentDashboardController::class, 'index'])->name('dashboard');
+        Route::get('/study-plan', [\App\Http\Controllers\Student\StudyPlanController::class, 'index'])->name('study-plan');
+        Route::get('/error-notebook', [\App\Http\Controllers\Student\ErrorNotebookController::class, 'index'])->name('error-notebook');
 
         // Student Vocabulary Library & Learning
         Route::prefix('vocabulary')->name('vocabulary.')->group(function () {

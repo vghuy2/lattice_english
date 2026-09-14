@@ -63,6 +63,8 @@ class ScoringConfigController extends Controller
             'is_active' => ! $rule->is_active,
         ]);
 
+        \Illuminate\Support\Facades\Cache::forget('active_scoring_rules');
+
         $statusText = $rule->is_active ? 'Kích hoạt' : 'Tạm tắt';
         return back()->with('success', "Đã {$statusText} quy tắc: {$rule->name}");
     }
@@ -88,6 +90,8 @@ class ScoringConfigController extends Controller
             'description' => $validated['description'] ?? null,
             'parameters' => $params,
         ]);
+
+        \Illuminate\Support\Facades\Cache::forget('active_scoring_rules');
 
         return back()->with('success', "Đã cập nhật cấu hình quy tắc: {$rule->name}");
     }

@@ -235,6 +235,8 @@
         }
 
         // 2. Word & Paragraph Counter Logic
+        const localStorageDraftKey = `lattice_writing_draft_{{ $prompt->id }}`;
+
         function calculateStats(text) {
             const trimmed = text.trim();
             const words = trimmed ? trimmed.split(/\s+/).length : 0;
@@ -254,6 +256,18 @@
                 badge.className = 'px-3 py-1 rounded-full font-mono text-xs font-bold border bg-emerald-50 text-emerald-800 border-emerald-300';
             } else {
                 badge.className = 'px-3 py-1 rounded-full font-mono text-xs font-bold border bg-amber-50 text-amber-800 border-amber-200';
+            }
+
+            // LocalStorage Instant Offline Backup
+            if (text && text.trim().length > 0) {
+                try {
+                    localStorage.setItem(localStorageDraftKey, JSON.stringify({
+                        content: text,
+                        savedAt: new Date().toISOString()
+                    }));
+                } catch (e) {
+                    // Ignore localStorage quota errors
+                }
             }
         }
 
@@ -301,12 +315,12 @@
 
                 if (res.ok) {
                     const data = await res.json();
-                    statusEl.innerText = `✓ Đã lưu nháp lúc ${data.updated_at}`;
+                    statusEl.innerText = `✓ Đã lưu nháp lúc ${data.updated_at} (sao lưu offline)`;
                 } else {
-                    statusEl.innerText = 'Lưu nháp thất bại.';
+                    statusEl.innerText = 'Lưu nháp máy chủ thất bại (đã giữ bản offline)';
                 }
             } catch (err) {
-                statusEl.innerText = 'Lỗi kết nối lưu nháp.';
+                statusEl.innerText = 'Lỗi mạng: đã tự động sao lưu bản nháp offline.';
             }
         }
 
@@ -335,11 +349,29 @@
                 if (!confirmSubmit) return;
             }
 
+            // Clear local storage draft after successful submission action
+            try {
+                localStorage.removeItem(localStorageDraftKey);
+            } catch (e) {}
+
             document.getElementById('writing-form').submit();
         }
 
-        // Initialize
+        // Initialize & Restore from LocalStorage if needed
         window.addEventListener('DOMContentLoaded', () => {
+            const editor = document.getElementById('essay_editor');
+            try {
+                const cached = localStorage.getItem(localStorageDraftKey);
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (parsed.content && (!editor.value || parsed.content.length > editor.value.length)) {
+                        editor.value = parsed.content;
+                        const statusEl = document.getElementById('save-status');
+                        if (statusEl) statusEl.innerText = '✓ Đã khôi phục bản nháp gần nhất từ bộ nhớ máy';
+                    }
+                }
+            } catch (e) {}
+
             onEditorInput();
             startTimer();
         });
