@@ -8,9 +8,11 @@ use App\Enums\VocabularyLevel;
 use App\Enums\WritingPromptType;
 use App\Enums\WritingTaskType;
 use App\Http\Controllers\Controller;
+use App\Jobs\ScoreWritingSubmission;
 use App\Models\VocabularyTopic;
 use App\Models\WritingPrompt;
 use App\Models\WritingSubmission;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\Scoring\WritingScoringService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -84,9 +86,15 @@ class WritingPracticeController extends Controller
         $task2Count = (int) ($stats->task2_count ?? 0);
         $avgScore = ($stats && $stats->avg_score !== null) ? round((float) $stats->avg_score, 1) : null;
 
+        $topics = RedisCacheKeys::rememberOrFallback(
+            RedisCacheKeys::TOPICS,
+            RedisCacheKeys::TTL_TOPICS,
+            fn () => VocabularyTopic::published()->ordered()->get()
+        );
+
         return view('student.writing.index', [
             'prompts' => $prompts,
-            'topics' => VocabularyTopic::published()->ordered()->get(),
+            'topics' => $topics,
             'taskTypes' => WritingTaskType::cases(),
             'promptTypes' => WritingPromptType::cases(),
             'levels' => VocabularyLevel::cases(),
@@ -222,11 +230,14 @@ class WritingPracticeController extends Controller
         $submission->submitted_at = now();
         $submission->save();
 
-        // Perform instant deterministic rule-based evaluation (Zero AI)
-        $this->scoringService->scoreSubmission($submission);
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
+
+        // Dispatch background scoring job to Redis queue
+        ScoreWritingSubmission::dispatch($submission->id);
 
         return redirect()->route('student.writing.submissions.show', $submission)
-            ->with('success', 'Nộp bài viết thành công! Hệ thống đã hoàn tất đánh giá theo 4 tiêu chí IELTS.');
+            ->with('success', 'Nộp bài viết thành công! Hệ thống đang tiến hành chấm điểm tự động theo 4 tiêu chí IELTS.');
     }
 
     /**

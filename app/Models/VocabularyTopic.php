@@ -62,6 +62,11 @@ class VocabularyTopic extends Model
         return $this->hasManyThrough(VocabularyItem::class, VocabularyLesson::class, 'topic_id', 'lesson_id');
     }
 
+    public function collocations(): HasMany
+    {
+        return $this->hasMany(Collocation::class, 'topic_id');
+    }
+
     public function getImageUrlAttribute(): ?string
     {
         if ($this->image && Storage::disk('public')->exists($this->image)) {

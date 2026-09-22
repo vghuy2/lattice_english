@@ -12,6 +12,7 @@ use App\Models\VocabularyItem;
 use App\Models\VocabularyLesson;
 use App\Models\VocabularyPracticeAnswer;
 use App\Models\VocabularyPracticeSession;
+use App\Services\Cache\RedisCacheKeys;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -116,6 +117,9 @@ class VocabularyLearningService
         }
 
         $progress->save();
+
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
 
         return $progress;
     }
@@ -371,6 +375,11 @@ class VocabularyLearningService
                 'status' => 'completed',
                 'completed_at' => now(),
             ]);
+
+            if ($session->lesson_id) {
+                RedisCacheKeys::invalidateActivePractice($session->user_id, $session->lesson_id);
+            }
+            RedisCacheKeys::invalidateStudentDashboard($session->user_id);
 
             return $session;
         });

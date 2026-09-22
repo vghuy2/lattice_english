@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Admin\Vocabulary\StoreTopicRequest;
 use App\Http\Requests\Admin\Vocabulary\UpdateTopicRequest;
 use App\Models\VocabularyTopic;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\VocabularyService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -64,6 +65,8 @@ class TopicController extends Controller
             $request->file('image')
         );
 
+        RedisCacheKeys::invalidateTopics();
+
         return redirect()->route('admin.vocabulary.topics.index')
             ->with('success', "Đã tạo chủ đề \"{$topic->title}\" thành công.");
     }
@@ -90,6 +93,8 @@ class TopicController extends Controller
             $request->file('image')
         );
 
+        RedisCacheKeys::invalidateTopics();
+
         return redirect()->route('admin.vocabulary.topics.index')
             ->with('success', "Đã cập nhật chủ đề \"{$topic->title}\" thành công.");
     }
@@ -101,6 +106,8 @@ class TopicController extends Controller
     {
         $title = $topic->title;
         $topic->delete();
+
+        RedisCacheKeys::invalidateTopics();
 
         return redirect()->route('admin.vocabulary.topics.index')
             ->with('success', "Đã xóa chủ đề \"{$title}\" cùng tất cả bài học liên quan.");
@@ -116,6 +123,8 @@ class TopicController extends Controller
             : ContentStatus::PUBLISHED;
 
         $topic->update(['status' => $newStatus]);
+
+        RedisCacheKeys::invalidateTopics();
 
         return back()->with('success', "Đã chuyển trạng thái chủ đề sang \"{$newStatus->label()}\".");
     }

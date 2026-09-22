@@ -42,8 +42,8 @@ enum WritingTaskType: string
     public function badgeClass(): string
     {
         return match ($this) {
-            self::TASK_1 => 'bg-cyan-500/10 text-cyan-700 border-cyan-500/20',
-            self::TASK_2 => 'bg-indigo-500/10 text-indigo-700 border-indigo-500/20',
+            self::TASK_1 => 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400 border-cyan-500/20',
+            self::TASK_2 => 'bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 border-indigo-500/20',
         };
     }
 }

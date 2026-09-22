@@ -14,6 +14,7 @@ use App\Models\WritingPrompt;
 use App\Models\WritingSubmission;
 use Carbon\Carbon;
 use Carbon\CarbonPeriod;
+use App\Services\Cache\RedisCacheKeys;
 
 class StudentProgressService
 {
@@ -24,20 +25,36 @@ class StudentProgressService
      */
     public function getDashboardData(User $user): array
     {
-        $vocabStats = $this->getVocabularyStats($user);
-        $writingStats = $this->getWritingStats($user);
-        $streakData = $this->calculateStudyStreak($user);
-        $inProgressData = $this->getInProgressLearning($user);
-        $bandProgress = $this->getBandProgress($user, $writingStats['avg_overall_band']);
+        $cacheKey = RedisCacheKeys::studentDashboardKey($user->id);
 
-        return [
-            'user' => $user,
-            'vocab' => $vocabStats,
-            'writing' => $writingStats,
-            'streak' => $streakData,
-            'in_progress' => $inProgressData,
-            'band_progress' => $bandProgress,
-        ];
+        $cached = RedisCacheKeys::rememberOrFallback($cacheKey, RedisCacheKeys::TTL_STUDENT_DASHBOARD, function () use ($user) {
+            $vocabStats = $this->getVocabularyStats($user);
+            $writingStats = $this->getWritingStats($user);
+            $streakData = $this->calculateStudyStreak($user);
+            $inProgressData = $this->getInProgressLearning($user);
+            $bandProgress = $this->getBandProgress($user, $writingStats['avg_overall_band']);
+
+            return [
+                'vocab' => $vocabStats,
+                'writing' => $writingStats,
+                'streak' => $streakData,
+                'in_progress' => $inProgressData,
+                'band_progress' => $bandProgress,
+            ];
+        });
+
+        $cached['user'] = $user;
+
+        return $cached;
+    }
+
+    /**
+     * Invalidate cached dashboard data for a student.
+     */
+    public function invalidateDashboardCache(User|int $user): void
+    {
+        $userId = $user instanceof User ? $user->id : (int) $user;
+        RedisCacheKeys::invalidateStudentDashboard($userId);
     }
 
     /**

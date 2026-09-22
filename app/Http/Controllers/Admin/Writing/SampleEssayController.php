@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin\Writing;
 use App\Http\Controllers\Controller;
 use App\Models\SampleEssay;
 use App\Models\WritingPrompt;
+use App\Services\Cache\RedisCacheKeys;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -87,6 +88,8 @@ class SampleEssayController extends Controller
             'order_index' => $validated['order_index'] ?? 0,
         ]);
 
+        RedisCacheKeys::invalidatePrompt($prompt->id);
+
         return redirect()->route('admin.writing.prompts.show', $prompt)
             ->with('success', 'Đã thêm bài mẫu Writing thành công!');
     }
@@ -167,6 +170,8 @@ class SampleEssayController extends Controller
             'order_index' => $validated['order_index'] ?? 0,
         ]);
 
+        RedisCacheKeys::invalidatePrompt($prompt->id);
+
         return redirect()->route('admin.writing.prompts.show', $prompt)
             ->with('success', 'Đã cập nhật bài mẫu thành công!');
     }
@@ -177,6 +182,8 @@ class SampleEssayController extends Controller
     public function destroy(WritingPrompt $prompt, SampleEssay $essay): RedirectResponse
     {
         $essay->delete();
+
+        RedisCacheKeys::invalidatePrompt($prompt->id);
 
         return redirect()->route('admin.writing.prompts.show', $prompt)
             ->with('success', 'Đã xóa bài mẫu thành công!');

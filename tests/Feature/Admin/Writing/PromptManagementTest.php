@@ -195,4 +195,51 @@ class PromptManagementTest extends TestCase
 
         $response->assertRedirect();
     }
+
+    public function test_admin_can_create_prompt_with_diagram_image(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        $file = \Illuminate\Http\UploadedFile::fake()->image('bar_chart.png', 600, 400);
+
+        $response = $this->actingAs($this->admin)
+            ->post(route('admin.writing.prompts.store'), [
+                'task_type' => WritingTaskType::TASK_1->value,
+                'prompt_type' => WritingPromptType::BAR_CHART->value,
+                'topic_id' => $this->topic->id,
+                'title' => 'Energy Production Bar Chart',
+                'prompt_text' => 'The bar chart below shows energy production from various sources in 2020.',
+                'image' => $file,
+                'level' => VocabularyLevel::BAND_4_5_5_0->value,
+                'min_words' => 150,
+                'time_limit_minutes' => 20,
+                'status' => ContentStatus::PUBLISHED->value,
+            ]);
+
+        $prompt = WritingPrompt::where('title', 'Energy Production Bar Chart')->first();
+        $this->assertNotNull($prompt);
+        $this->assertNotNull($prompt->image_path);
+        \Illuminate\Support\Facades\Storage::disk('public')->assertExists($prompt->image_path);
+
+        $response->assertRedirect(route('admin.writing.prompts.show', $prompt));
+    }
+
+    public function test_admin_can_parse_prompt_from_ocr_text(): void
+    {
+        $rawOcrText = "WRITING TASK 1\nYou should spend about 20 minutes on this task.\nThe bar chart below shows the percentage of households with internet access in three European countries between 2010 and 2020.\nSummarise the information by selecting and reporting the main features, and make comparisons where relevant.\nWrite at least 150 words.";
+
+        $response = $this->actingAs($this->admin)
+            ->postJson(route('admin.writing.prompts.ocr-image'), [
+                'raw_text' => $rawOcrText,
+            ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $response->assertJsonPath('data.task_type', 'task_1');
+        $response->assertJsonPath('data.prompt_type', 'bar_chart');
+        $response->assertJsonPath('data.min_words', 150);
+        $response->assertJsonPath('data.time_limit_minutes', 20);
+        $this->assertNotEmpty($response->json('data.title'));
+        $this->assertStringContainsString('households with internet access', $response->json('data.prompt_text'));
+    }
 }

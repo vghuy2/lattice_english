@@ -9,6 +9,8 @@ use App\Enums\WritingTaskType;
 use App\Http\Controllers\Controller;
 use App\Models\VocabularyTopic;
 use App\Models\WritingPrompt;
+use App\Services\Cache\RedisCacheKeys;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -138,6 +140,8 @@ class PromptController extends Controller
             'order_index' => $validated['order_index'] ?? 0,
         ]);
 
+        RedisCacheKeys::invalidatePrompt($prompt->id);
+
         return redirect()->route('admin.writing.prompts.show', $prompt)
             ->with('success', 'Đã tạo đề bài Writing thành công!');
     }
@@ -239,6 +243,8 @@ class PromptController extends Controller
             'order_index' => $validated['order_index'] ?? 0,
         ]);
 
+        RedisCacheKeys::invalidatePrompt($prompt->id);
+
         return redirect()->route('admin.writing.prompts.show', $prompt)
             ->with('success', 'Đã cập nhật đề bài Writing thành công!');
     }
@@ -252,7 +258,10 @@ class PromptController extends Controller
             Storage::disk('public')->delete($prompt->image_path);
         }
 
+        $promptId = $prompt->id;
         $prompt->delete();
+
+        RedisCacheKeys::invalidatePrompt($promptId);
 
         return redirect()->route('admin.writing.prompts.index')
             ->with('success', 'Đã xóa đề bài Writing thành công!');
@@ -270,6 +279,156 @@ class PromptController extends Controller
             'published_at' => $newStatus === ContentStatus::PUBLISHED && ! $prompt->published_at ? now() : $prompt->published_at,
         ]);
 
+        RedisCacheKeys::invalidatePrompt($prompt->id);
+
         return back()->with('success', "Đã chuyển trạng thái đề bài sang: {$newStatus->label()}");
+    }
+
+    /**
+     * Parse and structure IELTS Writing prompt from OCR text or uploaded diagram image.
+     */
+    public function ocrImage(Request $request): JsonResponse
+    {
+        $rawText = $request->input('raw_text');
+
+        if ($request->hasFile('image')) {
+            $request->validate([
+                'image' => ['required', 'image', 'mimes:jpeg,png,jpg,webp,svg', 'max:5120'],
+            ]);
+        }
+
+        if (empty($rawText) && ! $request->hasFile('image')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy nội dung văn bản hoặc hình ảnh để phân tích.',
+            ], 422);
+        }
+
+        $parsed = $this->parseStructuredPrompt((string) $rawText);
+
+        return response()->json([
+            'success' => true,
+            'data' => $parsed,
+        ]);
+    }
+
+    /**
+     * Smart parser for extracted IELTS Writing prompt text.
+     */
+    protected function parseStructuredPrompt(string $rawText): array
+    {
+        $cleaned = trim(preg_replace('/\r\n|\r/', "\n", $rawText));
+        $lines = array_values(array_filter(array_map('trim', explode("\n", $cleaned))));
+        $textLower = mb_strtolower($cleaned);
+
+        // Detect Task Type (Task 1 vs Task 2)
+        $task1Keywords = ['chart', 'graph', 'diagram', 'table', 'pie', 'bar', 'map', 'process', 'summarise the information', 'summarize the information', 'features, and make comparisons'];
+        $task2Keywords = ['agree or disagree', 'discuss both', 'advantages and disadvantages', 'to what extent', 'positive or negative', 'opinion'];
+
+        $task1Matches = 0;
+        foreach ($task1Keywords as $kw) {
+            if (str_contains($textLower, $kw)) {
+                $task1Matches++;
+            }
+        }
+
+        $task2Matches = 0;
+        foreach ($task2Keywords as $kw) {
+            if (str_contains($textLower, $kw)) {
+                $task2Matches++;
+            }
+        }
+
+        $taskType = ($task1Matches >= $task2Matches && $task1Matches > 0) ? WritingTaskType::TASK_1->value : WritingTaskType::TASK_2->value;
+        if (str_contains($textLower, 'task 1') || str_contains($textLower, 'writing task 1')) {
+            $taskType = WritingTaskType::TASK_1->value;
+        } elseif (str_contains($textLower, 'task 2') || str_contains($textLower, 'writing task 2')) {
+            $taskType = WritingTaskType::TASK_2->value;
+        }
+
+        // Detect Prompt Type
+        $promptType = $taskType === WritingTaskType::TASK_1->value ? WritingPromptType::BAR_CHART->value : WritingPromptType::OPINION->value;
+        if ($taskType === WritingTaskType::TASK_1->value) {
+            if (str_contains($textLower, 'line graph') || str_contains($textLower, 'line chart')) {
+                $promptType = WritingPromptType::LINE_GRAPH->value;
+            } elseif (str_contains($textLower, 'pie chart')) {
+                $promptType = WritingPromptType::PIE_CHART->value;
+            } elseif (str_contains($textLower, 'table')) {
+                $promptType = WritingPromptType::TABLE->value;
+            } elseif (str_contains($textLower, 'map') || str_contains($textLower, 'maps') || str_contains($textLower, 'plan')) {
+                $promptType = WritingPromptType::MAP->value;
+            } elseif (str_contains($textLower, 'process') || str_contains($textLower, 'cycle') || str_contains($textLower, 'flow chart')) {
+                $promptType = WritingPromptType::PROCESS_DIAGRAM->value;
+            } elseif (str_contains($textLower, 'bar chart') || str_contains($textLower, 'bar graph')) {
+                $promptType = WritingPromptType::BAR_CHART->value;
+            }
+        } else {
+            if (str_contains($textLower, 'discuss both')) {
+                $promptType = WritingPromptType::DISCUSSION->value;
+            } elseif (str_contains($textLower, 'advantages') && str_contains($textLower, 'disadvantages')) {
+                $promptType = WritingPromptType::ADVANTAGE_DISADVANTAGE->value;
+            } elseif (str_contains($textLower, 'cause') || str_contains($textLower, 'problem') || str_contains($textLower, 'solution')) {
+                $promptType = WritingPromptType::PROBLEM_SOLUTION->value;
+            } else {
+                $promptType = WritingPromptType::OPINION->value;
+            }
+        }
+
+        // Extract Prompt Statement
+        $promptText = '';
+        if (preg_match('/(The\s+[\w\s,]+(?:below|above)?\s+(?:shows|illustrates|gives|compares|presents|depicts)[\s\S]*?(?:where relevant\.|150 words\.|words\.|\.))/i', $cleaned, $matches)) {
+            $promptText = trim($matches[0]);
+        } elseif (preg_match('/(You should spend about (?:20|40) minutes on this task\.[\s\S]*)/i', $cleaned, $matches)) {
+            $promptText = trim($matches[1]);
+        } elseif (! empty($lines)) {
+            $promptText = implode(' ', array_slice($lines, 0, 4));
+        }
+
+        $promptText = (string) preg_replace('/\s+/', ' ', $promptText);
+
+        // Derive Title from Prompt Text or first line
+        if (preg_match('/(?:shows|illustrates|gives information about|compares)\s+([^.]+)/i', $promptText, $titleMatches)) {
+            $rawTitle = trim($titleMatches[1]);
+            $rawTitle = (string) preg_replace('/\s+Summarise.*$/i', '', $rawTitle);
+            $rawTitle = (string) preg_replace('/\s+Write at least.*$/i', '', $rawTitle);
+            $title = Str::title(Str::limit(trim($rawTitle), 80, ''));
+        } elseif (! empty($lines)) {
+            $firstLine = reset($lines);
+            $title = Str::title(Str::limit($firstLine, 80, ''));
+        } else {
+            $title = $taskType === WritingTaskType::TASK_1->value ? 'IELTS Writing Task 1 Diagram' : 'IELTS Writing Task 2 Essay';
+        }
+
+        // Suggested Outline based on Task Type
+        if ($taskType === WritingTaskType::TASK_1->value) {
+            $outline = [
+                ['section' => 'Introduction', 'hint' => 'Paraphrase lại câu hỏi đề bài bằng từ đồng nghĩa (1-2 câu).'],
+                ['section' => 'Overview', 'hint' => 'Nêu 2-3 xu hướng bao quát nhất hoặc các điểm cao nhất/thấp nhất (không đưa số liệu chi tiết).'],
+                ['section' => 'Body Paragraph 1', 'hint' => 'Mô tả chi tiết nhóm số liệu nổi bật đầu tiên kèm số liệu và so sánh cụ thể.'],
+                ['section' => 'Body Paragraph 2', 'hint' => 'Mô tả chi tiết nhóm số liệu còn lại, chỉ ra sự tương phản hoặc tương đồng.'],
+            ];
+            $minWords = 150;
+            $timeLimit = 20;
+        } else {
+            $outline = [
+                ['section' => 'Introduction', 'hint' => 'Dẫn dắt chủ đề (paraphrase đề bài) và nêu rõ luận điểm / lập trường cá nhân (Thesis Statement).'],
+                ['section' => 'Body Paragraph 1', 'hint' => 'Luận điểm thứ nhất: Topic sentence + giải thích nguyên nhân + ví dụ thực tế minh họa.'],
+                ['section' => 'Body Paragraph 2', 'hint' => 'Luận điểm thứ hai: Topic sentence + phân tích sâu chiều ngược lại hoặc bổ trợ + ví dụ.'],
+                ['section' => 'Conclusion', 'hint' => 'Khẳng định lại quan điểm chính và đưa ra lời kết/dự đoán tương lai (1-2 câu).'],
+            ];
+            $minWords = 250;
+            $timeLimit = 40;
+        }
+
+        return [
+            'title' => $title,
+            'prompt_text' => $promptText ?: $cleaned,
+            'task_type' => $taskType,
+            'prompt_type' => $promptType,
+            'min_words' => $minWords,
+            'time_limit_minutes' => $timeLimit,
+            'suggested_outline' => $outline,
+            'raw_text' => $cleaned,
+        ];
     }
 }

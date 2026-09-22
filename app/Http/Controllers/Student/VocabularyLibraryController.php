@@ -10,6 +10,7 @@ use App\Models\StudentVocabularyReview;
 use App\Models\VocabularyItem;
 use App\Models\VocabularyLesson;
 use App\Models\VocabularyTopic;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\VocabularyLearningService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -29,8 +30,12 @@ class VocabularyLibraryController extends Controller
     {
         $user = $request->user();
 
-        // 1. Fetch available topics
-        $topics = VocabularyTopic::published()->ordered()->get();
+        // 1. Fetch available topics (cached with Redis)
+        $topics = RedisCacheKeys::rememberOrFallback(
+            RedisCacheKeys::TOPICS,
+            RedisCacheKeys::TTL_TOPICS,
+            fn () => VocabularyTopic::published()->ordered()->get()
+        );
 
         // 2. Fetch available lessons (published and published_at <= now)
         $query = VocabularyLesson::availableForStudents()
@@ -93,7 +98,11 @@ class VocabularyLibraryController extends Controller
 
         $user = $request->user();
 
-        $lesson->load(['topic', 'items' => fn ($q) => $q->ordered()]);
+        RedisCacheKeys::rememberOrFallback(
+            RedisCacheKeys::lessonContentKey($lesson->id),
+            RedisCacheKeys::TTL_LESSON_CONTENT,
+            fn () => $lesson->load(['topic', 'items' => fn ($q) => $q->ordered()])
+        );
 
         // Get user reviews for items in this lesson
         $reviewsMap = StudentVocabularyReview::where('user_id', $user->id)
@@ -127,6 +136,9 @@ class VocabularyLibraryController extends Controller
         $user = $request->user();
         $review = $this->learningService->markWordStatus($user, $item, $request->input('status'));
 
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
+
         if ($request->wantsJson()) {
             return response()->json([
                 'success' => true,
@@ -146,6 +158,9 @@ class VocabularyLibraryController extends Controller
     {
         $user = $request->user();
         $isFavorite = $this->learningService->toggleFavorite($user, $item);
+
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
 
         if ($request->wantsJson()) {
             return response()->json([
@@ -169,6 +184,9 @@ class VocabularyLibraryController extends Controller
 
         $user = $request->user();
         $this->learningService->savePersonalNote($user, $item, $request->input('note'));
+
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
 
         if ($request->wantsJson()) {
             return response()->json([

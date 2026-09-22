@@ -107,6 +107,10 @@ Route::middleware('auth')->group(function () {
             Route::post('topics/{topic}/toggle-status', [\App\Http\Controllers\Admin\Vocabulary\TopicController::class, 'toggleStatus'])->name('topics.toggle-status');
             Route::resource('topics', \App\Http\Controllers\Admin\Vocabulary\TopicController::class);
 
+            // Collocations CRUD
+            Route::post('collocations/{collocation}/toggle-status', [\App\Http\Controllers\Admin\Vocabulary\CollocationController::class, 'toggleStatus'])->name('collocations.toggle-status');
+            Route::resource('collocations', \App\Http\Controllers\Admin\Vocabulary\CollocationController::class);
+
             // Lessons CRUD & Preview
             Route::post('lessons/{lesson}/toggle-status', [\App\Http\Controllers\Admin\Vocabulary\LessonController::class, 'toggleStatus'])->name('lessons.toggle-status');
             Route::get('lessons/{lesson}/preview', [\App\Http\Controllers\Admin\Vocabulary\LessonController::class, 'preview'])->name('lessons.preview');
@@ -119,6 +123,10 @@ Route::middleware('auth')->group(function () {
 
         // Admin Writing Management
         Route::prefix('writing')->name('writing.')->group(function () {
+            // Dedicated Task 1 & Task 2 routes
+            Route::get('task-1', [\App\Http\Controllers\Admin\Writing\PromptController::class, 'task1Index'])->name('task1.index');
+            Route::get('task-2', [\App\Http\Controllers\Admin\Writing\PromptController::class, 'task2Index'])->name('task2.index');
+
             // Scoring Configuration & Rubrics
             Route::get('scoring', [\App\Http\Controllers\Admin\Writing\ScoringConfigController::class, 'index'])->name('scoring.index');
             Route::put('scoring/rubrics/{rubric}', [\App\Http\Controllers\Admin\Writing\ScoringConfigController::class, 'updateRubric'])->name('scoring.rubrics.update');
@@ -126,6 +134,7 @@ Route::middleware('auth')->group(function () {
             Route::put('scoring/rules/{rule}', [\App\Http\Controllers\Admin\Writing\ScoringConfigController::class, 'updateRule'])->name('scoring.rules.update');
 
             // Prompts CRUD
+            Route::post('prompts/ocr-image', [\App\Http\Controllers\Admin\Writing\PromptController::class, 'ocrImage'])->name('prompts.ocr-image');
             Route::post('prompts/{prompt}/toggle-status', [\App\Http\Controllers\Admin\Writing\PromptController::class, 'toggleStatus'])->name('prompts.toggle-status');
             Route::resource('prompts', \App\Http\Controllers\Admin\Writing\PromptController::class);
 

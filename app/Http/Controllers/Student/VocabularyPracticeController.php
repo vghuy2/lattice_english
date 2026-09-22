@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Student;
 use App\Http\Controllers\Controller;
 use App\Models\VocabularyLesson;
 use App\Models\VocabularyPracticeSession;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\VocabularyLearningService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -27,19 +28,29 @@ class VocabularyPracticeController extends Controller
 
         $user = $request->user();
 
-        // Check if there is an in-progress session
-        $existingSession = VocabularyPracticeSession::where('user_id', $user->id)
-            ->where('lesson_id', $lesson->id)
-            ->where('status', 'in_progress')
-            ->latest()
-            ->first();
+        // Check if there is an in-progress session (with Redis cache optimization)
+        $activeKey = RedisCacheKeys::practiceActiveKey($user->id, $lesson->id);
+        $existingSessionId = RedisCacheKeys::rememberOrFallback($activeKey, RedisCacheKeys::TTL_PRACTICE_ACTIVE, function () use ($user, $lesson) {
+            $existing = VocabularyPracticeSession::where('user_id', $user->id)
+                ->where('lesson_id', $lesson->id)
+                ->where('status', 'in_progress')
+                ->latest()
+                ->first();
 
-        if ($existingSession) {
-            return redirect()->route('student.vocabulary.practice.show', $existingSession);
+            return $existing?->id;
+        });
+
+        if ($existingSessionId) {
+            $existingSession = VocabularyPracticeSession::find($existingSessionId);
+            if ($existingSession && $existingSession->status === 'in_progress') {
+                return redirect()->route('student.vocabulary.practice.show', $existingSession);
+            }
+            RedisCacheKeys::invalidateActivePractice($user->id, $lesson->id);
         }
 
         try {
             $session = $this->learningService->generatePracticeSession($user, $lesson);
+            RedisCacheKeys::rememberOrFallback($activeKey, RedisCacheKeys::TTL_PRACTICE_ACTIVE, fn () => $session->id);
             return redirect()->route('student.vocabulary.practice.show', $session);
         } catch (\Exception $e) {
             return back()->with('error', $e->getMessage());
@@ -85,6 +96,12 @@ class VocabularyPracticeController extends Controller
         $userAnswers = $request->input('answers', []);
 
         $completedSession = $this->learningService->submitPracticeSession($session, $userAnswers);
+
+        // Invalidate active session and dashboard cache
+        if ($session->lesson_id) {
+            RedisCacheKeys::invalidateActivePractice($session->user_id, $session->lesson_id);
+        }
+        RedisCacheKeys::invalidateStudentDashboard($session->user_id);
 
         return redirect()->route('student.vocabulary.practice.result', $completedSession)
             ->with('success', "Chúc mừng bạn đã hoàn thành bài luyện tập! Độ chính xác: {$completedSession->accuracy_rate}%.");
