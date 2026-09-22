@@ -81,8 +81,23 @@
 
                     <!-- Panel 1: Prompt & Chart Image -->
                     <div id="panel-prompt" class="space-y-4">
-                        <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-sm font-semibold text-slate-900 leading-relaxed font-sans">
-                            {{ $prompt->prompt_text }}
+                        <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-sm font-semibold text-slate-900 leading-relaxed font-sans space-y-2">
+                            <div class="flex items-center justify-between pb-1.5 border-b border-slate-200/70">
+                                <span class="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Đề bài Tiếng Anh:</span>
+                                <button
+                                    type="button"
+                                    id="btn-student-speak-prompt"
+                                    onclick="toggleStudentSpeakPrompt()"
+                                    class="min-h-[28px] inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold transition cursor-pointer"
+                                    title="Nghe phát âm đề bài tiếng Anh chuẩn"
+                                >
+                                    <span id="student-speak-icon">🔊</span>
+                                    <span id="student-speak-text">Nghe đọc đề</span>
+                                </button>
+                            </div>
+                            <p id="student-prompt-text" class="text-sm font-semibold text-slate-900 leading-relaxed">
+                                {{ $prompt->prompt_text }}
+                            </p>
                         </div>
 
                         @if ($prompt->image_path)
@@ -235,6 +250,8 @@
         }
 
         // 2. Word & Paragraph Counter Logic
+        const localStorageDraftKey = `lattice_writing_draft_{{ $prompt->id }}`;
+
         function calculateStats(text) {
             const trimmed = text.trim();
             const words = trimmed ? trimmed.split(/\s+/).length : 0;
@@ -254,6 +271,18 @@
                 badge.className = 'px-3 py-1 rounded-full font-mono text-xs font-bold border bg-emerald-50 text-emerald-800 border-emerald-300';
             } else {
                 badge.className = 'px-3 py-1 rounded-full font-mono text-xs font-bold border bg-amber-50 text-amber-800 border-amber-200';
+            }
+
+            // LocalStorage Instant Offline Backup
+            if (text && text.trim().length > 0) {
+                try {
+                    localStorage.setItem(localStorageDraftKey, JSON.stringify({
+                        content: text,
+                        savedAt: new Date().toISOString()
+                    }));
+                } catch (e) {
+                    // Ignore localStorage quota errors
+                }
             }
         }
 
@@ -301,12 +330,12 @@
 
                 if (res.ok) {
                     const data = await res.json();
-                    statusEl.innerText = `✓ Đã lưu nháp lúc ${data.updated_at}`;
+                    statusEl.innerText = `✓ Đã lưu nháp lúc ${data.updated_at} (sao lưu offline)`;
                 } else {
-                    statusEl.innerText = 'Lưu nháp thất bại.';
+                    statusEl.innerText = 'Lưu nháp máy chủ thất bại (đã giữ bản offline)';
                 }
             } catch (err) {
-                statusEl.innerText = 'Lỗi kết nối lưu nháp.';
+                statusEl.innerText = 'Lỗi mạng: đã tự động sao lưu bản nháp offline.';
             }
         }
 
@@ -335,13 +364,79 @@
                 if (!confirmSubmit) return;
             }
 
+            // Clear local storage draft after successful submission action
+            try {
+                localStorage.removeItem(localStorageDraftKey);
+            } catch (e) {}
+
             document.getElementById('writing-form').submit();
         }
 
-        // Initialize
+        // Initialize & Restore from LocalStorage if needed
         window.addEventListener('DOMContentLoaded', () => {
+            const editor = document.getElementById('essay_editor');
+            try {
+                const cached = localStorage.getItem(localStorageDraftKey);
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (parsed.content && (!editor.value || parsed.content.length > editor.value.length)) {
+                        editor.value = parsed.content;
+                        const statusEl = document.getElementById('save-status');
+                        if (statusEl) statusEl.innerText = '✓ Đã khôi phục bản nháp gần nhất từ bộ nhớ máy';
+                    }
+                }
+            } catch (e) {}
+
             onEditorInput();
             startTimer();
         });
+
+        let isStudentSpeaking = false;
+        function toggleStudentSpeakPrompt() {
+            if (!('speechSynthesis' in window)) {
+                alert('Trình duyệt của bạn không hỗ trợ tính năng đọc âm thanh (Web Speech API).');
+                return;
+            }
+
+            const btn = document.getElementById('btn-student-speak-prompt');
+            const icon = document.getElementById('student-speak-icon');
+            const text = document.getElementById('student-speak-text');
+
+            if (isStudentSpeaking) {
+                window.speechSynthesis.cancel();
+                isStudentSpeaking = false;
+                icon.textContent = '🔊';
+                text.textContent = 'Nghe đọc đề';
+                btn.classList.remove('bg-rose-50', 'text-rose-700', 'border-rose-200');
+                btn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+                return;
+            }
+
+            const promptText = document.getElementById('student-prompt-text')?.textContent.trim();
+            if (!promptText) return;
+
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(promptText);
+            utterance.lang = 'en-US';
+            utterance.rate = 0.95;
+
+            utterance.onstart = function() {
+                isStudentSpeaking = true;
+                icon.textContent = '⏹️';
+                text.textContent = 'Dừng đọc';
+                btn.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+                btn.classList.add('bg-rose-50', 'text-rose-700', 'border-rose-200');
+            };
+
+            utterance.onend = utterance.onerror = function() {
+                isStudentSpeaking = false;
+                icon.textContent = '🔊';
+                text.textContent = 'Nghe đọc đề';
+                btn.classList.remove('bg-rose-50', 'text-rose-700', 'border-rose-200');
+                btn.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
     </script>
 </x-layouts.student>

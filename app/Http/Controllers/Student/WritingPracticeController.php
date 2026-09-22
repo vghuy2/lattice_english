@@ -8,9 +8,11 @@ use App\Enums\VocabularyLevel;
 use App\Enums\WritingPromptType;
 use App\Enums\WritingTaskType;
 use App\Http\Controllers\Controller;
+use App\Jobs\ScoreWritingSubmission;
 use App\Models\VocabularyTopic;
 use App\Models\WritingPrompt;
 use App\Models\WritingSubmission;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\Scoring\WritingScoringService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -63,23 +65,36 @@ class WritingPracticeController extends Controller
             ->get()
             ->groupBy('writing_prompt_id');
 
-        // Overall stats
-        $totalSubmitted = WritingSubmission::where('user_id', $user->id)->submitted()->count();
-        $task1Count = WritingSubmission::where('user_id', $user->id)
-            ->whereHas('prompt', fn ($q) => $q->where('task_type', 'task_1'))
-            ->submitted()
-            ->count();
-        $task2Count = WritingSubmission::where('user_id', $user->id)
-            ->whereHas('prompt', fn ($q) => $q->where('task_type', 'task_2'))
-            ->submitted()
-            ->count();
-        $avgScore = WritingSubmission::where('user_id', $user->id)
-            ->graded()
-            ->avg('overall_score');
+        // Overall stats (consolidated into 1 SQL aggregate)
+        $stats = WritingSubmission::where('writing_submissions.user_id', $user->id)
+            ->whereIn('writing_submissions.status', [
+                SubmissionStatus::SUBMITTED->value,
+                SubmissionStatus::GRADING->value,
+                SubmissionStatus::GRADED->value,
+            ])
+            ->join('writing_prompts', 'writing_submissions.writing_prompt_id', '=', 'writing_prompts.id')
+            ->selectRaw("
+                COUNT(writing_submissions.id) as total_submitted,
+                COUNT(CASE WHEN writing_prompts.task_type = 'task_1' THEN 1 END) as task1_count,
+                COUNT(CASE WHEN writing_prompts.task_type = 'task_2' THEN 1 END) as task2_count,
+                AVG(CASE WHEN writing_submissions.status = ? THEN writing_submissions.overall_score END) as avg_score
+            ", [SubmissionStatus::GRADED->value])
+            ->first();
+
+        $totalSubmitted = (int) ($stats->total_submitted ?? 0);
+        $task1Count = (int) ($stats->task1_count ?? 0);
+        $task2Count = (int) ($stats->task2_count ?? 0);
+        $avgScore = ($stats && $stats->avg_score !== null) ? round((float) $stats->avg_score, 1) : null;
+
+        $topics = RedisCacheKeys::rememberOrFallback(
+            RedisCacheKeys::TOPICS,
+            RedisCacheKeys::TTL_TOPICS,
+            fn () => VocabularyTopic::published()->ordered()->get()
+        );
 
         return view('student.writing.index', [
             'prompts' => $prompts,
-            'topics' => VocabularyTopic::published()->ordered()->get(),
+            'topics' => $topics,
             'taskTypes' => WritingTaskType::cases(),
             'promptTypes' => WritingPromptType::cases(),
             'levels' => VocabularyLevel::cases(),
@@ -215,11 +230,14 @@ class WritingPracticeController extends Controller
         $submission->submitted_at = now();
         $submission->save();
 
-        // Perform instant deterministic rule-based evaluation (Zero AI)
-        $this->scoringService->scoreSubmission($submission);
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
+
+        // Dispatch background scoring job to Redis queue
+        ScoreWritingSubmission::dispatch($submission->id);
 
         return redirect()->route('student.writing.submissions.show', $submission)
-            ->with('success', 'Nộp bài viết thành công! Hệ thống đã hoàn tất đánh giá theo 4 tiêu chí IELTS.');
+            ->with('success', 'Nộp bài viết thành công! Hệ thống đang tiến hành chấm điểm tự động theo 4 tiêu chí IELTS.');
     }
 
     /**

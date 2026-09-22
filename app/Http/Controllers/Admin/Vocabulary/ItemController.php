@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\Vocabulary\StoreVocabularyItemRequest;
 use App\Http\Requests\Admin\Vocabulary\UpdateVocabularyItemRequest;
 use App\Models\VocabularyItem;
 use App\Models\VocabularyLesson;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\VocabularyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -70,6 +71,8 @@ class ItemController extends Controller
 
         $item = $this->vocabularyService->saveItem($data, null, $audioFile);
 
+        RedisCacheKeys::invalidateLesson($lesson->id);
+
         return redirect()->route('admin.vocabulary.lessons.items.index', $lesson)
             ->with('success', "Đã thêm từ \"{$item->word}\" vào bài học thành công.");
     }
@@ -101,6 +104,8 @@ class ItemController extends Controller
 
         $this->vocabularyService->saveItem($data, $item, $audioFile);
 
+        RedisCacheKeys::invalidateLesson($lesson->id);
+
         return redirect()->route('admin.vocabulary.lessons.items.index', $lesson)
             ->with('success', "Đã cập nhật từ vựng \"{$item->word}\" thành công.");
     }
@@ -112,6 +117,8 @@ class ItemController extends Controller
     {
         $word = $item->word;
         $item->delete();
+
+        RedisCacheKeys::invalidateLesson($lesson->id);
 
         return redirect()->route('admin.vocabulary.lessons.items.index', $lesson)
             ->with('success', "Đã xóa từ \"{$word}\" khỏi bài học.");
@@ -129,6 +136,8 @@ class ItemController extends Controller
                 ->where('id', $itemId)
                 ->update(['sort_order' => $order]);
         }
+
+        RedisCacheKeys::invalidateLesson($lesson->id);
 
         if ($request->wantsJson()) {
             return response()->json(['message' => 'Cập nhật thứ tự từ vựng thành công.']);

@@ -12,6 +12,7 @@ use App\Models\VocabularyItem;
 use App\Models\VocabularyLesson;
 use App\Models\VocabularyPracticeAnswer;
 use App\Models\VocabularyPracticeSession;
+use App\Services\Cache\RedisCacheKeys;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
@@ -117,6 +118,9 @@ class VocabularyLearningService
 
         $progress->save();
 
+        // Invalidate student dashboard cache
+        RedisCacheKeys::invalidateStudentDashboard($user->id);
+
         return $progress;
     }
 
@@ -158,20 +162,26 @@ class VocabularyLearningService
                 PracticeQuestionType::CONTEXTUAL,
             ];
 
+            $answersData = [];
+            $now = now();
+
             foreach ($items as $index => $item) {
                 $questionType = $types[$index % count($types)];
-
                 $questionData = $this->buildQuestionPayload($item, $questionType, $items, $distractorItems);
 
-                VocabularyPracticeAnswer::create([
+                $answersData[] = [
                     'session_id' => $session->id,
                     'vocabulary_item_id' => $item->id,
-                    'question_type' => $questionType,
-                    'question_data' => $questionData,
+                    'question_type' => $questionType->value,
+                    'question_data' => json_encode($questionData),
                     'user_answer' => null,
                     'is_correct' => false,
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
+
+            VocabularyPracticeAnswer::insert($answersData);
 
             return $session;
         });
@@ -224,19 +234,26 @@ class VocabularyLearningService
                 PracticeQuestionType::CONTEXTUAL,
             ];
 
+            $answersData = [];
+            $now = now();
+
             foreach ($items as $idx => $item) {
                 $questionType = $types[$idx % count($types)];
                 $questionData = $this->buildQuestionPayload($item, $questionType, $items, $distractors);
 
-                VocabularyPracticeAnswer::create([
+                $answersData[] = [
                     'session_id' => $session->id,
                     'vocabulary_item_id' => $item->id,
-                    'question_type' => $questionType,
-                    'question_data' => $questionData,
+                    'question_type' => $questionType->value,
+                    'question_data' => json_encode($questionData),
                     'user_answer' => null,
                     'is_correct' => false,
-                ]);
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
             }
+
+            VocabularyPracticeAnswer::insert($answersData);
 
             return $session;
         });
@@ -358,6 +375,11 @@ class VocabularyLearningService
                 'status' => 'completed',
                 'completed_at' => now(),
             ]);
+
+            if ($session->lesson_id) {
+                RedisCacheKeys::invalidateActivePractice($session->user_id, $session->lesson_id);
+            }
+            RedisCacheKeys::invalidateStudentDashboard($session->user_id);
 
             return $session;
         });

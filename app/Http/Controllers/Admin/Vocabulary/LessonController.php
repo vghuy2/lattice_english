@@ -9,6 +9,7 @@ use App\Http\Requests\Admin\Vocabulary\StoreLessonRequest;
 use App\Http\Requests\Admin\Vocabulary\UpdateLessonRequest;
 use App\Models\VocabularyLesson;
 use App\Models\VocabularyTopic;
+use App\Services\Cache\RedisCacheKeys;
 use App\Services\VocabularyService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -84,6 +85,8 @@ class LessonController extends Controller
             $request->file('thumbnail')
         );
 
+        RedisCacheKeys::invalidateLesson($lesson->id);
+
         return redirect()->route('admin.vocabulary.lessons.index', ['topic_id' => $lesson->topic_id])
             ->with('success', "Đã tạo bài học \"{$lesson->title}\" thành công. Hãy thêm từ vựng cho bài học.");
     }
@@ -114,6 +117,8 @@ class LessonController extends Controller
             $request->file('thumbnail')
         );
 
+        RedisCacheKeys::invalidateLesson($lesson->id);
+
         return redirect()->route('admin.vocabulary.lessons.index', ['topic_id' => $lesson->topic_id])
             ->with('success', "Đã cập nhật bài học \"{$lesson->title}\" thành công.");
     }
@@ -124,7 +129,10 @@ class LessonController extends Controller
     public function destroy(VocabularyLesson $lesson): RedirectResponse
     {
         $title = $lesson->title;
+        $lessonId = $lesson->id;
         $lesson->delete();
+
+        RedisCacheKeys::invalidateLesson($lessonId);
 
         return redirect()->route('admin.vocabulary.lessons.index')
             ->with('success', "Đã xóa bài học \"{$title}\" cùng toàn bộ từ vựng.");
@@ -157,6 +165,8 @@ class LessonController extends Controller
         }
 
         $lesson->update($updateData);
+
+        RedisCacheKeys::invalidateLesson($lesson->id);
 
         return back()->with('success', "Đã chuyển trạng thái bài học sang \"{$newStatus->label()}\".");
     }

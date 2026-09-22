@@ -8,6 +8,7 @@ use App\Enums\WritingTaskType;
 use App\Models\ScoringRule;
 use App\Models\WritingPrompt;
 use App\Models\WritingSubmission;
+use Illuminate\Support\Facades\Cache;
 
 class WritingScoringService
 {
@@ -48,7 +49,9 @@ class WritingScoringService
      */
     public function evaluate(array $analysis, WritingPrompt $prompt): array
     {
-        $rules = ScoringRule::active()->get()->keyBy('rule_key');
+        $rules = Cache::remember('active_scoring_rules', 86400, function () {
+            return ScoringRule::active()->get()->keyBy('rule_key');
+        });
 
         $taResult = $this->evaluateTaskAchievement($analysis, $prompt, $rules->get('min_word_penalty'), $rules->get('task1_overview_required'));
         $ccResult = $this->evaluateCoherenceCohesion($analysis, $prompt, $rules->get('paragraph_structure_rule'), $rules->get('connective_repetition_threshold'));

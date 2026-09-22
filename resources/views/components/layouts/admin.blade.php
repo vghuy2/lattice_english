@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi" class="h-full bg-slate-900 text-slate-100 antialiased">
+<html lang="vi" class="dark h-full bg-slate-900 text-slate-100 antialiased">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
